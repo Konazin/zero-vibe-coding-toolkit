@@ -69,6 +69,10 @@ def load_registry(value: str):
         if target in destinations:
             raise ValueError('Projects must have distinct notes')
         destinations.add(target)
+        for field in ('reference_sha', 'verified_sha'):
+            sha = item.get(field)
+            if sha is not None and (not isinstance(sha, str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)):
+                raise ValueError(f'{field} must be a full lowercase Git SHA')
         repo = item.get('repo')
         if repo is not None and (not isinstance(repo, str) or not Path(repo).expanduser().is_absolute()):
             raise ValueError('repo must be an explicit absolute path')
@@ -93,12 +97,15 @@ def metadata(text):
     data = json.loads(match[1])
     if not isinstance(data, dict):
         raise ValueError('Invalid note metadata')
-    if data.get('updated') is not None:
-        if not isinstance(data['updated'], str):
-            raise ValueError('Invalid updated timestamp')
-        age_days(data['updated'])
-    if data.get('sha') is not None and (not isinstance(data['sha'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', data['sha'])):
-        raise ValueError('Invalid source SHA')
+    date = data.get('captured_at', data.get('note_modified', data.get('updated')))
+    if date is not None:
+        if not isinstance(date, str):
+            raise ValueError('Invalid note modification timestamp')
+        age_days(date)
+    for field in ('reference_sha', 'verified_sha', 'sha'):
+        sha = data.get(field)
+        if sha is not None and (not isinstance(sha, str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)):
+            raise ValueError(f'Invalid {field}')
     return data
 
 

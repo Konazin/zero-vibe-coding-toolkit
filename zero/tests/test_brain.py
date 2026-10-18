@@ -1,8 +1,11 @@
 """Brain contracts exercised only with disposable registries, vaults and Git repos."""
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from pathlib import Path
 
@@ -65,19 +68,30 @@ class BrainTests(unittest.TestCase):
         self.cli('status')
         self.cli('recall', 'demo')
         self.cli('switch', 'demo')
-        self.cli('verify', ok=2)  # unknown metadata, unrelated invalid UTF-8 is never opened
+        self.cli('verify')  # legacy note and unrelated invalid UTF-8 are tolerated/unread
         after = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         self.assertEqual(before, after)
 
-    def test_status_unknown_current_stale_and_future(self):
-        self.assertEqual(json.loads(self.cli('status').stdout)[0]['sha_state'], 'unknown')
-        self.stamp()
+    def test_status_separates_note_date_reference_and_verified_commit(self):
+        row = json.loads(self.cli('status').stdout)[0]
+        self.assertEqual(row['verification_state'], 'unverified')
+        self.assertEqual(row['reference_state'], 'unknown')
+        self.stamp(updated='2026-01-01T00:00:00+00:00', sha=self.head)
+        old = 1767225600
+        os.utime(self.note, (old, old))
         row = json.loads(self.cli('status', '--max-age-days', '0.1').stdout)[0]
-        self.assertEqual(row['sha_state'], 'current')
+        self.assertEqual(row['reference_state'], 'matches_head')
+        self.assertEqual(row['verification_state'], 'unverified')
         self.assertEqual(row['date_state'], 'stale')
+        self.registry['projects']['demo']['verified_sha'] = self.head
+        self.save_config()
+        row = json.loads(self.cli('status').stdout)[0]
+        self.assertEqual(row['verification_state'], 'verified_at_head')
         self.stamp(updated='2999-01-01T00:00:00Z', sha='a' * 40)
         row = json.loads(self.cli('status').stdout)[0]
-        self.assertEqual((row['sha_state'], row['date_state']), ('stale', 'future'))
+        self.assertEqual((row['reference_state'], row['date_state']), ('differs_from_head', 'fresh'))
+        self.assertEqual(row['verification_state'], 'verified_at_head')
+        self.assertEqual(json.loads(self.cli('verify', ok=2).stdout)['issues'][0]['kind'], 'future-timestamp')
 
     def test_status_missing_note_and_unavailable_repo_are_unknown(self):
         self.note.unlink()
@@ -85,7 +99,7 @@ class BrainTests(unittest.TestCase):
         self.save_config()
         row = json.loads(self.cli('status').stdout)[0]
         self.assertFalse(row['exists'])
-        self.assertEqual(row['sha_state'], 'unknown')
+        self.assertEqual(row['verification_state'], 'unverified')
         self.cli('recall', 'demo', ok=2)
 
     def test_recall_budget_query_unicode_and_redaction(self):
@@ -141,7 +155,7 @@ class BrainTests(unittest.TestCase):
         self.assertIn(before.decode().strip(), self.note.read_text())
         self.assertIn('Validated a fixture.', self.note.read_text())
         self.assertEqual(Path(str(self.draft) + '.backup').read_bytes(), before)
-        self.assertEqual(json.loads(self.cli('status').stdout)[0]['sha_state'], 'current')
+        self.assertEqual(json.loads(self.cli('status').stdout)[0]['verification_state'], 'unverified')
         self.cli('verify')
         self.cli('capture', 'demo', '--draft', self.draft, '--approve', approval, ok=2)
 
@@ -223,7 +237,7 @@ class BrainTests(unittest.TestCase):
         self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                  'commit', '--allow-empty', '-qm', 'later')
         report = json.loads(self.cli('verify', ok=2).stdout)
-        self.assertIn('stale-source', str(report))
+        self.assertIn('reference-differs-from-head', str(report))
 
     def test_bad_utf8_oversized_and_malformed_metadata(self):
         for content in (b'\xff', b'x' * (256 * 1024 + 1), b'<!-- zero-brain: [] -->\n'):
@@ -274,6 +288,84 @@ class BrainTests(unittest.TestCase):
         with self.note.open('a') as stream:
             stream.write('[asset](../asset.png)\n')
         self.cli('verify')
+
+    def test_two_approved_captures_on_same_version_do_not_silently_lose_data(self):
+        draft_a = self.root / 'capture-a.json'
+        draft_b = self.root / 'capture-b.json'
+        entry_a = self.root / 'entry-a.md'
+        entry_b = self.root / 'entry-b.md'
+        entry_a.write_text('## Capture A\nUnique payload A.\n')
+        entry_b.write_text('## Capture B\nUnique payload B.\n')
+        for draft, entry in ((draft_a, entry_a), (draft_b, entry_b)):
+            self.cli('capture', 'demo', '--draft', draft, '--text-file', entry)
+        approvals = []
+        for draft in (draft_a, draft_b):
+            result = self.cli('capture', 'demo', '--draft', draft, '--review')
+            approvals.append(result.stdout.split('REVIEW_SHA256=')[1].splitlines()[0])
+        barrier = threading.Barrier(2)
+
+        def approve(draft, token):
+            barrier.wait(timeout=5)
+            return subprocess.run([sys.executable, str(CLI), 'brain', '--config', str(self.config),
+                                   'capture', 'demo', '--draft', str(draft), '--approve', token],
+                                  capture_output=True, text=True, timeout=15)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(approve, draft_a, approvals[0]), pool.submit(approve, draft_b, approvals[1])]
+            results = [f.result(timeout=20) for f in futures]
+        self.assertEqual(sorted(r.returncode for r in results), [0, 2])
+        body = self.note.read_text()
+        self.assertNotEqual('Unique payload A.' in body, 'Unique payload B.' in body)
+        losing = next(r for r in results if r.returncode == 2)
+        self.assertRegex(losing.stderr, 'changed|lock|approved')
+        self.assertTrue(draft_a.exists() and draft_b.exists())
+
+    def test_capture_does_not_mark_entire_note_verified_or_move_reference(self):
+        self.stamp(sha='a' * 40)
+        self.registry['projects']['demo']['verified_sha'] = 'b' * 40
+        self.save_config()
+        self.prepare()
+        approval = self.review_hash()
+        self.cli('capture', 'demo', '--draft', self.draft, '--approve', approval)
+        row = json.loads(self.cli('status').stdout)[0]
+        self.assertEqual(row['reference_sha'], 'a' * 40)
+        self.assertEqual(row['verified_sha'], 'b' * 40)
+        self.assertEqual(row['reference_state'], 'differs_from_head')
+        self.assertEqual(row['verification_state'], 'verification_stale')
+
+    def test_legacy_note_status_verify_and_capture_are_non_destructive(self):
+        original = '# Existing Obsidian note\n\nKeep this exact text.\n'
+        self.note.write_text(original)
+        row = json.loads(self.cli('status').stdout)[0]
+        self.assertEqual(row['metadata_state'], 'legacy_without_metadata')
+        self.assertEqual(row['date_source'], 'filesystem mtime')
+        self.assertEqual(row['reference_state'], 'unknown')
+        self.assertEqual(json.loads(self.cli('verify').stdout)['notices'][0]['kind'],
+                         'legacy-note-without-zero-brain-metadata')
+        self.prepare()
+        review = self.cli('capture', 'demo', '--draft', self.draft, '--review')
+        self.assertIn('Keep this exact text.', review.stdout)
+        approval = review.stdout.split('REVIEW_SHA256=')[1].splitlines()[0]
+        self.assertEqual(self.note.read_text(), original)
+        self.cli('capture', 'demo', '--draft', self.draft, '--approve', approval)
+        saved = self.note.read_text()
+        self.assertTrue(saved.startswith(original))
+        self.assertNotIn('<!-- zero-brain:', saved)
+        self.assertIn('Validated a fixture.', saved)
+
+    def test_obsidian_wikilink_resolution_and_ambiguity(self):
+        (self.vault / 'one').mkdir()
+        (self.vault / 'two').mkdir()
+        (self.vault / 'one/target.md').write_text('# Target\n')
+        (self.vault / 'two/target.md').write_text('# Target\n')
+        (self.vault / 'image.png').write_bytes(b'image')
+        self.note.write_text('# Demo\n[[target|alias]]\n[[one/target#Heading|explicit]]\n'
+                              '[[one' + chr(92) + 'target|backslash path]]\n![[image.png]]\n')
+        report = json.loads(self.cli('verify', ok=2).stdout)
+        ambiguous = [i for i in report['issues'] if i['kind'] == 'ambiguous-wikilink']
+        self.assertEqual(len(ambiguous), 1)
+        self.assertEqual(ambiguous[0]['matches'], ['one/target.md', 'two/target.md'])
+        self.assertFalse(any(i['kind'] == 'broken-or-unsafe-wikilink' for i in report['issues']))
 
     def test_switch_is_explicit_and_stateless(self):
         data = json.loads(self.cli('switch', 'demo').stdout)

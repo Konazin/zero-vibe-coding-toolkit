@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import math
 import posixpath
 import re
@@ -22,14 +23,28 @@ def status(args, vault, projects):
             text = note_bytes(path).decode('utf-8')
             meta = metadata(text)
             head = git_head(item)
-            recorded = meta.get('sha')
-            sha_state = ('current' if head == recorded else 'stale') if head and recorded else 'unknown'
-            updated = meta.get('updated')
-            age = age_days(updated) if isinstance(updated, str) else None
-            row.update(sha_state=sha_state, head=head, recorded_sha=recorded,
-                       age_days=round(age, 2) if age is not None else None,
-                       date_state='unknown' if age is None else ('future' if age < 0 else
-                                  ('stale' if age > args.max_age_days else 'current')))
+            reference = meta.get('reference_sha') or meta.get('sha') or item.get('reference_sha')
+            verified = item.get('verified_sha') or meta.get('verified_sha')
+            modified = None
+            if path.exists():
+                from datetime import datetime, timezone
+                modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+                row['date_source'] = 'filesystem mtime'
+            else:
+                modified = meta.get('note_modified', meta.get('updated'))
+                row['date_source'] = 'metadata fallback' if modified else 'unknown'
+            age = age_days(modified) if isinstance(modified, str) else None
+            row.update(
+                note_modified=modified,
+                age_days=round(age, 2) if age is not None else None,
+                date_state='unknown' if age is None else ('future' if age < 0 else
+                           ('stale' if age > args.max_age_days else 'fresh')),
+                reference_sha=reference,
+                observed_sha=head,
+                reference_state=('matches_head' if head == reference else 'differs_from_head') if head and reference else 'unknown',
+                verified_sha=verified,
+                verification_state=('verified_at_head' if head == verified else 'verification_stale') if head and verified else 'unverified',
+                metadata_state='present' if meta else 'legacy_without_metadata')
         except (ValueError, OSError, UnicodeError, TypeError):
             row['error'] = 'Unreadable note or invalid metadata'
         rows.append(row)
@@ -75,9 +90,31 @@ def switch(args, vault, projects):
     return 0
 
 
+def _wiki_basename_matches(vault, stem, suffix='.md'):
+    matches = []
+    seen = 0
+    for base, dirs, files in os.walk(vault, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if not d.startswith('.') and not (Path(base) / d).is_symlink())
+        for filename in files:
+            seen += 1
+            if seen > 10000:
+                return matches, True
+            candidate_path = Path(filename)
+            if (filename.lower().endswith(suffix.lower())
+                    and candidate_path.stem.casefold() == stem.casefold()):
+                candidate = Path(base) / filename
+                if candidate.is_file() and not candidate.is_symlink():
+                    matches.append(candidate.relative_to(vault).as_posix())
+                    if len(matches) > 10:
+                        return matches, False
+    return matches, False
+
+
+
 def verify(args, vault, projects):
     issues = []
     unchecked = 0
+    notices = []
     for name, item in projects.items():
         path = project(vault, projects, name)
         try:
@@ -85,18 +122,20 @@ def verify(args, vault, projects):
                 raise ValueError('Note is missing')
             text = note_bytes(path).decode('utf-8')
             meta = metadata(text)
-            if not meta.get('updated') or not meta.get('sha'):
-                issues.append({'project': name, 'kind': 'unknown-source-metadata'})
-            else:
-                if age_days(meta['updated']) < 0:
-                    issues.append({'project': name, 'kind': 'future-timestamp'})
-                if not re.fullmatch(r'[0-9a-f]{40,64}', meta['sha']):
-                    raise ValueError('Invalid source SHA')
-                head = git_head(item)
-                if not head:
-                    issues.append({'project': name, 'kind': 'source-unavailable'})
-                elif head != meta['sha']:
-                    issues.append({'project': name, 'kind': 'stale-source'})
+            if not meta:
+                notices.append({'project': name, 'kind': 'legacy-note-without-zero-brain-metadata'})
+            modified = meta.get('captured_at', meta.get('note_modified', meta.get('updated')))
+            if modified is not None and age_days(modified) < 0:
+                issues.append({'project': name, 'kind': 'future-timestamp'})
+            reference = meta.get('reference_sha') or meta.get('sha') or item.get('reference_sha')
+            verified = item.get('verified_sha') or meta.get('verified_sha')
+            head = git_head(item)
+            if reference and head and head != reference:
+                issues.append({'project': name, 'kind': 'reference-differs-from-head'})
+            if verified and head and head != verified:
+                issues.append({'project': name, 'kind': 'verification-stale'})
+            if not item.get('repo') and (reference or verified):
+                issues.append({'project': name, 'kind': 'source-unavailable'})
             if '\x00' in text or any(ord(c) < 32 and c not in '\n\r\t' for c in text):
                 issues.append({'project': name, 'kind': 'control-character'})
             fenced = False
@@ -113,15 +152,15 @@ def verify(args, vault, projects):
                     continue
                 if re.match(r'^\\[#>|-]', line):
                     issues.append({'project': name, 'line': number, 'kind': 'suspected-escaped-markdown'})
-                links = re.findall(r'!?\[[^\]]*\]\(([^\s)]+)\)', line)
-                links += [s.split('|')[0] for s in re.findall(r'\[\[([^\]]+)\]\]', line)]
-                for link in links:
+                markdown_links = re.findall(r'!?\[[^\]]*\]\(([^\s)]+)\)', line)
+                wiki_links = re.findall(r'\[\[([^\]]+)\]\]', line)
+                for link in markdown_links:
                     parsed = urlsplit(link)
                     if parsed.scheme or parsed.netloc:
                         unchecked += 1
                         continue
                     target = unquote(parsed.path)
-                    if not target:  # anchors are not resolved by this lightweight checker
+                    if not target:
                         unchecked += 1
                         continue
                     try:
@@ -135,11 +174,42 @@ def verify(args, vault, projects):
                         issues.append({'project': name, 'line': number, 'kind': 'broken-or-unsafe-link'})
                     if parsed.fragment:
                         unchecked += 1
+                for raw in wiki_links:
+                    target = raw.split('|', 1)[0].strip().split('#', 1)[0].split('^', 1)[0].strip()
+                    if not target:
+                        unchecked += 1
+                        continue
+                    try:
+                        target = unquote(target)
+                        has_path = '/' in target or chr(92) in target
+                        suffix = Path(target).suffix
+                        if has_path:
+                            normalized = posixpath.normpath(target.replace(chr(92), '/'))
+                            candidate = Path(normalized)
+                            if not candidate.suffix:
+                                candidate = candidate.with_suffix('.md')
+                            resolved = note_path(vault, str(candidate), markdown=False)
+                            if not resolved.is_file():
+                                raise ValueError('Missing wiki path')
+                        else:
+                            stem = target[:-len(suffix)] if suffix else target
+                            matches, limited = _wiki_basename_matches(vault, stem, suffix or '.md')
+                            if limited:
+                                issues.append({'project': name, 'line': number, 'kind': 'wikilink-scan-limit', 'target': target})
+                            elif len(matches) > 1:
+                                issues.append({'project': name, 'line': number, 'kind': 'ambiguous-wikilink',
+                                               'target': target, 'matches': matches[:10]})
+                            elif not matches:
+                                raise ValueError('Missing wikilink')
+                    except ValueError:
+                        issues.append({'project': name, 'line': number, 'kind': 'broken-or-unsafe-wikilink', 'target': target})
+                    if '#' in raw or '^' in raw:
+                        unchecked += 1
             if fenced:
                 issues.append({'project': name, 'kind': 'unclosed-code-fence'})
         except (ValueError, OSError, UnicodeError, TypeError):
             issues.append({'project': name, 'kind': 'unreadable-or-invalid-note'})
-    print(json.dumps({'issues': issues, 'unchecked_links_or_anchors': unchecked,
+    print(json.dumps({'issues': issues, 'notices': notices, 'unchecked_links_or_anchors': unchecked,
                       'scope': 'Registered notes only; no network, no Markdown repair, no source truth proof.'}, indent=2))
     return 2 if issues else 0
 

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from brain_store import (MAX_BYTES, META, SECRET, digest, git_head, note_bytes,
-                         project, read_small, safe_text, utc_now)
+                         metadata, project, read_small, safe_text, utc_now)
 
 
 def private_path(value, vault):
@@ -36,13 +36,17 @@ def encode(data):
     return json.dumps(data, sort_keys=True, ensure_ascii=False).encode('utf-8')
 
 
-def proposed(base, entry, meta):
+def proposed(base, entry, meta, include_metadata=True):
     text = base.decode('utf-8')
     lines = text.splitlines(keepends=True)
-    if lines and META.fullmatch(lines[0].rstrip('\r\n')):
+    has_metadata = bool(lines and META.fullmatch(lines[0].rstrip('\r\n')))
+    if has_metadata:
         text = ''.join(lines[1:])
-    result = '<!-- zero-brain: ' + json.dumps(meta, sort_keys=True) + ' -->\n'
-    return (result + text + ('\n\n' if not text.endswith('\n') else '\n') + entry.strip() + '\n').encode('utf-8')
+    addition = text + ('\n\n' if text and not text.endswith('\n\n') else ('\n' if text.endswith('\n') else '')) + entry.strip() + '\n'
+    if not has_metadata and not include_metadata:
+        return addition.encode('utf-8')
+    header = '<!-- zero-brain: ' + json.dumps(meta, sort_keys=True) + ' -->\n'
+    return (header + addition).encode('utf-8')
 
 
 def capture(args, vault, projects):
@@ -57,10 +61,18 @@ def capture(args, vault, projects):
         entry = read_small(Path(args.text_file).expanduser()).decode('utf-8')
         if not entry.strip() or SECRET.search(entry) or '<!-- zero-brain:' in entry or any(not c.isprintable() and c not in '\n\r\t' for c in entry):
             raise ValueError('Empty, suspected secret, or reserved metadata in capture input')
+        previous = {}
+        if base:
+            previous = metadata(base.decode('utf-8'))
+        reference_sha = previous.get('reference_sha') or previous.get('sha') or projects[args.project].get('reference_sha')
+        verified_sha = previous.get('verified_sha')
+        modified = utc_now()
+        meta = {'captured_at': modified, 'reference_sha': reference_sha,
+                'verified_sha': verified_sha, 'updated': modified, 'sha': reference_sha}
         data = {'version': 1, 'project': args.project, 'target': str(target),
                 'base_sha256': digest(base), 'base_exists': target.exists(), 'entry': entry,
-                'metadata': {'updated': utc_now(), 'sha': git_head(projects[args.project])}}
-        result = proposed(base, entry, data['metadata'])
+                'metadata': meta}
+        result = proposed(base, entry, data['metadata'], include_metadata=not target.exists() or bool(previous))
         if len(result) > MAX_BYTES or SECRET.search(base.decode('utf-8')):
             raise ValueError('Capture exceeds note limit or existing note contains suspected secrets')
         write_private(draft, encode(data))
@@ -76,7 +88,8 @@ def capture(args, vault, projects):
         raise ValueError('Invalid draft payload')
     if SECRET.search(entry) or SECRET.search(base.decode('utf-8')) or '<!-- zero-brain:' in entry or any(not c.isprintable() and c not in '\n\r\t' for c in entry):
         raise ValueError('Suspected secrets or reserved metadata; review input privately')
-    result = proposed(base, entry, meta)
+    had_metadata = bool(base and base.decode('utf-8').splitlines() and META.fullmatch(base.decode('utf-8').splitlines()[0]))
+    result = proposed(base, entry, meta, include_metadata=not target.exists() or had_metadata)
     if len(result) > MAX_BYTES:
         raise ValueError('Capture exceeds note limit')
     approval = digest(encode(data))
@@ -89,11 +102,12 @@ def capture(args, vault, projects):
     if args.approve != approval:
         raise ValueError('Approval hash mismatch; review the exact draft first')
     backup = private_path(str(draft) + '.backup', vault)
-    lock = private_path(str(draft) + '.lock', vault)
+    # One atomic lock per destination, shared by all drafts targeting this note.
+    lock = target.parent / ('.zero-brain-capture-' + digest(str(target).encode()) + '.lock')
     write_private(lock, b'capture\n')
     temporary = None
     try:
-        # Recheck after taking the per-draft lock; never silently rebase approved content.
+        # Recheck after taking the per-note lock; competing approved captures fail explicitly.
         if note_bytes(project(vault, projects, args.project)) != base or target.exists() != data['base_exists']:
             raise ValueError('Note changed during approval')
         if target.exists():

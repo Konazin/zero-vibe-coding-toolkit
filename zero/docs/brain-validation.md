@@ -5,21 +5,29 @@ checkout or client configuration was accessed or changed. No global dependencies
 
 Final command outcomes and measured local retrieval results are recorded below after execution.
 
+## Corrective review evidence
+
+The corrective review adds per-note capture locking, separate filesystem mtime/reference/verified commit reporting, Obsidian-style wikilink resolution with ambiguity notices, and header-free support for legacy notes. A two-process race test approves two captures against the same original note: exactly one succeeds and the other reports a stale base. They are never silently collapsed into one write.
+
 ## Executed checks
 
-Environment: Linux, Python 3.12.14, Node.js 24.19.0.
+Environment: Linux, Node.js 24.19.0. CPython 3.10.22 and 3.13.16 were installed under /tmp for isolated version-specific test runs; Python 3.12.14 is also available in the host runtime.
 Base: `9277d458de1c39c1b09e1acd50d9e25f3a29b1ea` (`feat/zero-engineering-toolkit`).
 
 | Check | Outcome | Evidence |
 | --- | --- | --- |
-| `python3 -m unittest discover -s zero/tests -v` | PASS | 36 tests: all 12 unchanged v0.1 tests + 24 Brain tests; 3.644 seconds |
+| CPython 3.10.22 unittest suite | PASS | 40 tests: 12 v0.1 and 28 Brain contracts; 4.921 seconds |
+| CPython 3.13.16 unittest suite | PASS | Same 40 tests; 5.028 seconds |
+| Concurrent capture regression | PASS | Two approved processes against same source; one commits, one explicit conflict |
+| Legacy note regressions | PASS | status/verify work without metadata; capture retains original bytes and adds no header |
+| Obsidian wikilink regressions | PASS | basename, folder path, aliases, headings, attachments and ambiguity |
 | `python3 -m py_compile zero/zeroctl.py zero/brain.py zero/brain_store.py zero/brain_capture.py` | PASS | Exit 0 |
 | `python3 zero/zeroctl.py brain --help` | PASS | All five commands listed; exit 0 |
 | `node --test scripts/validate-docs.test.mjs` | PASS | 9 validator regression tests |
-| `node scripts/validate-docs.mjs` | PASS | 618 local links/anchors, destinations and JSON checks at execution |
+| `node scripts/validate-docs.mjs` | PASS | local links/anchors, destinations and JSON checks at execution |
 | `node --test scripts/validate-harness.test.mjs` | PASS | 2 existing evaluator regression tests |
 | `git diff --check` | PASS | Exit 0 |
-| Python 3.10 and 3.13 locally | NOT RUN | Only Python 3.12 available for this run; workflow now covers 3.10/3.13 |
+| Python 3.12 additional run | NOT RUN | Full matrix requested and passed on 3.10 and 3.13 |
 | Actual Codex/Claude sessions and personal vault | NOT RUN | Opt-in documentation only; no personal access or configuration edits |
 | Provider token savings | NOT RUN | No model/provider was invoked |
 | Generated Next.js app and ESLint runtime checks | NOT RUN | No application/template/runtime changes in this iteration |
