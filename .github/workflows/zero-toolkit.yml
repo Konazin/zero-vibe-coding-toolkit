@@ -19,6 +19,9 @@ permissions:
 jobs:
   zero-contracts:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.13']
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -28,10 +31,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python }}
       - name: Syntax check
-        run: python -m py_compile zero/zeroctl.py
+        run: python -m py_compile zero/zeroctl.py zero/brain.py zero/brain_store.py zero/brain_capture.py
       - name: Unit tests
         run: python -m unittest discover -s zero/tests -v
       - name: CLI help
-        run: python zero/zeroctl.py --help
+        run: |
+          python zero/zeroctl.py --help
+          python zero/zeroctl.py brain --help

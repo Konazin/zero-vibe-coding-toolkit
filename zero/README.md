@@ -47,6 +47,15 @@ python3 zero/zeroctl.py metrics zero/examples/benchmark.schema-example.json
 
 Replace example numbers with provider-reported input/output tokens and acceptance-test results from matched tasks; this example is synthetic. An observed quality regression yields exit code 2. See [benchmark protocol](docs/benchmark.md).
 
+## Zero Brain v0.2
+
+Optional local Markdown memory extends the existing CLI with `brain status`, `recall`,
+`capture`, `switch` and `verify`. Use an explicit private registry; capture requires
+preparation, diff review and approval before writing. No personal notes are bundled.
+See the [command and safety contract](docs/brain-v0.2.md),
+[optional Codex/Claude integration](integrations/brain.md) and
+[validation evidence](docs/brain-validation.md).
+
 ## Engineering modules
 
 | Module | What to use |

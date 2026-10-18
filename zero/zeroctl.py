@@ -295,7 +295,11 @@ def main(argv=None) -> int:
     p.add_argument('command', nargs=argparse.REMAINDER); p.set_defaults(fn=gate)
     p = subs.add_parser('metrics', help='Compare provider-reported token counts and outcomes')
     p.add_argument('file'); p.set_defaults(fn=metrics)
+    from brain import register
+    register(subs)
     args = parser.parse_args(argv)
+    if getattr(args, 'budget_tokens', 1) <= 0:
+        parser.error('Token budget must be positive')
     if getattr(args, 'budget_bytes', 1) <= 0 or getattr(args, 'max_matches', 1) <= 0 or getattr(args, 'max_files_scanned', 1) <= 0 or getattr(args, 'output_bytes', 1) <= 0 or getattr(args, 'timeout', 1) <= 0:
         parser.error('Budgets, counts and timeouts must be positive')
     try:
