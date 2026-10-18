@@ -1,0 +1,20 @@
+# Engineering constraints and known work
+
+## Technical debt and trade-offs
+
+| Item | Impact | Evidence | Suggested next step | State |
+| --- | --- | --- | --- | --- |
+
+## Quality and testing strategy
+
+- Required checks:
+- Test boundaries:
+- Known gaps:
+
+## Security, reliability and observability
+
+-
+
+## Performance evidence
+
+Record workload, environment, command, measured result and date. Do not label estimates as measurements.

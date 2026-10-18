@@ -66,3 +66,30 @@ content. Human approval is an agent/user policy; a hash only binds content. A no
 writer can race final replacement; use a quiet vault during approval. Existing notes have a
 private backup before replacement. No live integration, independent reviewer or personal-data
 migration was exercised. Full contracts: [Zero Brain](brain-v0.2.md).
+
+## v1 foundation evidence
+
+The v1 extension adds private registry initialization/update, scoped project roots,
+BM25 Markdown retrieval, task briefs, an explicitly approved rebuildable JSON index,
+Obsidian dashboard preview/update, ADR listing, handoff draft/recovery, custom capture
+targets, and read-only root-wide link/duplicate-passage checks. Integration tests use
+temporary vaults and registries. This is a functional v1 foundation; known gaps are
+listed in `brain-v1.md` and should be reviewed before calling it a complete personal
+knowledge system.
+
+Retrieval benchmark command: `python3 zero/tests/benchmark_brain_v1.py`.
+
+| Measurement | Observed on this run |
+| --- | --- |
+| Runtime | CPython 3.12.14, Linux x86_64 |
+| Synthetic questions | 2, 5 repeated process runs each |
+| Expected source coverage | 100% on both fixture queries (4/4 expected sources) |
+| Irrelevant retrieved sources | 0 |
+| Median complete search process | 41.36 ms across 10 runs |
+| Retrieved context | 326 and 294 UTF-8 bytes for the two cases |
+| Omitted matches | 0 in these small fixtures |
+| Provider token counts / task quality | NOT RUN; no provider was invoked |
+
+This corpus has five notes, two hand-written queries and exact expected file paths.
+It is a smoke benchmark, not evidence of general semantic quality, large-vault
+performance, real token savings, or usefulness in the user's personal vault.

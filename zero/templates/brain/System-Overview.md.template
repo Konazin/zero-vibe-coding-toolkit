@@ -1,0 +1,39 @@
+# System architecture
+
+## Context and responsibilities
+
+Describe the system boundary, actors and responsibilities. Mark assumptions.
+
+## Components and module boundaries
+
+| Component | Responsibility | Owns | Depends on |
+| --- | --- | --- | --- |
+
+## Data flow
+
+```mermaid
+flowchart LR
+  user[User] --> app[Application]
+```
+
+Replace this example with a verified flow; do not imply unverified behavior.
+
+## Interfaces and contracts
+
+-
+
+## Deployment and integrations
+
+-
+
+## Constraints and quality attributes
+
+- Security:
+- Reliability:
+- Performance:
+- Observability:
+
+## Evolution and sources
+
+| Claim | Source (commit, file, test or document) | Verified at |
+| --- | --- | --- |

@@ -45,6 +45,23 @@ def note_path(vault: Path, name: str, markdown=True) -> Path:
     return current
 
 
+def project_root(vault: Path, name: str) -> Path:
+    """Return an explicitly registered, contained project knowledge folder."""
+    rel = Path(name)
+    if rel.is_absolute() or '..' in rel.parts or not rel.parts:
+        raise ValueError('Project roots must be relative paths inside the vault')
+    current = vault
+    for part in rel.parts:
+        if part.startswith('.'):
+            raise ValueError('Hidden project roots are forbidden')
+        current = current / part
+        if current.is_symlink():
+            raise ValueError('Symlink project roots are forbidden')
+    if not current.is_dir() or not current.resolve().is_relative_to(vault):
+        raise ValueError('Project root must be an existing directory inside the vault')
+    return current
+
+
 def load_registry(value: str):
     config = Path(value).expanduser().resolve()
     data = json.loads(read_small(config))
@@ -60,6 +77,7 @@ def load_registry(value: str):
     if not isinstance(projects, dict) or not 1 <= len(projects) <= MAX_PROJECTS:
         raise ValueError('Registry requires 1..100 projects')
     destinations = set()
+    roots = []
     for name, item in projects.items():
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name) or not isinstance(item, dict):
             raise ValueError('Invalid project identifier or record')
@@ -69,6 +87,15 @@ def load_registry(value: str):
         if target in destinations:
             raise ValueError('Projects must have distinct notes')
         destinations.add(target)
+        root = item.get('root')
+        if root is not None:
+            if not isinstance(root, str):
+                raise ValueError('root must be a relative vault path')
+            resolved_root = project_root(vault, root)
+            if any(resolved_root == existing or resolved_root.is_relative_to(existing) or existing.is_relative_to(resolved_root)
+                   for existing in roots):
+                raise ValueError('Project knowledge roots must not overlap')
+            roots.append(resolved_root)
         for field in ('reference_sha', 'verified_sha'):
             sha = item.get(field)
             if sha is not None and (not isinstance(sha, str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)):
@@ -76,6 +103,16 @@ def load_registry(value: str):
         repo = item.get('repo')
         if repo is not None and (not isinstance(repo, str) or not Path(repo).expanduser().is_absolute()):
             raise ValueError('repo must be an explicit absolute path')
+    for owner, item in projects.items():
+        if not item.get('root'):
+            continue
+        root = project_root(vault, item['root'])
+        for other, other_item in projects.items():
+            if other == owner:
+                continue
+            other_note = note_path(vault, other_item['note'])
+            if other_note == root or other_note.is_relative_to(root):
+                raise ValueError('A project note cannot be inside another project knowledge root')
     return vault, projects
 
 

@@ -200,6 +200,9 @@ class BrainTests(unittest.TestCase):
         for draft in (self.vault / 'draft.json', self.repo / 'draft.json'):
             self.cli('capture', 'demo', '--draft', draft, '--text-file', self.entry, ok=2)
             self.assertFalse(draft.exists())
+        traversing = self.vault.parent / 'outside' / '..' / self.vault.name / 'escaped-draft.json'
+        self.cli('capture', 'demo', '--draft', traversing, '--text-file', self.entry, ok=2)
+        self.assertFalse((self.vault / 'escaped-draft.json').exists())
         self.draft.symlink_to(self.entry)
         self.cli('capture', 'demo', '--draft', self.draft, '--text-file', self.entry, ok=2)
 

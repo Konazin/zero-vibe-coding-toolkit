@@ -22,6 +22,20 @@ Never copy full chat history, credentials or private notes into public repositor
 Never repair Markdown or create vault Git snapshots without separate explicit approval.
 ```
 
+Keep `ZERO_BRAIN_REGISTRY` in a private local shell environment or pass the explicit path;
+never put a personal path or registry in a public project instruction file. The optional
+`root` registry field scopes retrieval to a specific Markdown directory. No global client
+configuration, hook, daemon, permission change, or automatic memory write is needed.
+
+For v1, explicitly request a bounded task brief, project-scoped search, or latest handoff:
+
+```bash
+python3 /path/to/toolkit/zero/zeroctl.py brain --config "$ZERO_BRAIN_REGISTRY" \
+  brief 'continue the account migration' --project zerocoding --budget-tokens 1200
+python3 /path/to/toolkit/zero/zeroctl.py brain --config "$ZERO_BRAIN_REGISTRY" \
+  handoff latest zerocoding
+```
+
 ## Claude Code
 
 Use the same shared project policy where `CLAUDE.md` already imports `AGENTS.md`.

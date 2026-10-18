@@ -1,0 +1,33 @@
+# Project overview
+
+> Scope: concise, verified orientation for a new project session.
+
+## Purpose and users
+
+- Problem:
+- Primary users:
+- Current outcome:
+
+## Current state
+
+- Status:
+- Last confirmed at (UTC):
+- Evidence / commit:
+- Next concrete step:
+
+## Boundaries
+
+- In scope:
+- Out of scope:
+- Constraints:
+
+## Navigation
+
+- Architecture: [[Architecture/System-Overview]]
+- Engineering constraints: [[Engineering/Constraints]]
+- Decisions: [[Decisions/Decision-Log]]
+- Latest handoff: [[Sessions/Latest-Handoff]]
+
+## Unknown or stale information
+
+-

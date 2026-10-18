@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Syntax check
-        run: python -m py_compile zero/zeroctl.py zero/brain.py zero/brain_store.py zero/brain_capture.py
+        run: python -m py_compile zero/zeroctl.py zero/brain.py zero/brain_store.py zero/brain_capture.py zero/brain_v1.py
       - name: Unit tests
         run: python -m unittest discover -s zero/tests -v
       - name: CLI help

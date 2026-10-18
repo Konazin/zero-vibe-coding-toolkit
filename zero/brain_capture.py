@@ -8,13 +8,15 @@ import tempfile
 from pathlib import Path
 
 from brain_store import (MAX_BYTES, META, SECRET, digest, git_head, note_bytes,
-                         metadata, project, read_small, safe_text, utc_now)
+                         metadata, note_path, project, project_root, read_small,
+                         safe_text, utc_now)
 
 
 def private_path(value, vault):
     path = Path(value).expanduser().absolute()
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise ValueError('Private artifact paths cannot contain symlinks')
+    path = path.resolve(strict=False)
     if path.is_relative_to(vault):
         raise ValueError('Drafts and backups must stay outside the vault')
     if any((p / '.git').exists() for p in path.parents):
@@ -51,6 +53,13 @@ def proposed(base, entry, meta, include_metadata=True):
 
 def capture(args, vault, projects):
     target = project(vault, projects, args.project)
+    if args.target:
+        if not projects[args.project].get('root'):
+            raise ValueError('A custom capture target requires an explicitly registered project root')
+        target = note_path(vault, args.target)
+        root = project_root(vault, projects[args.project]['root'])
+        if not target.is_relative_to(root):
+            raise ValueError('Capture target must be inside the registered project root')
     draft = private_path(args.draft, vault)
     if not target.parent.is_dir():
         raise ValueError('Note parent directory must already exist; no implicit vault setup')
@@ -108,7 +117,7 @@ def capture(args, vault, projects):
     temporary = None
     try:
         # Recheck after taking the per-note lock; competing approved captures fail explicitly.
-        if note_bytes(project(vault, projects, args.project)) != base or target.exists() != data['base_exists']:
+        if note_bytes(target) != base or target.exists() != data['base_exists']:
             raise ValueError('Note changed during approval')
         if target.exists():
             write_private(backup, base)  # durable recovery copy; never overwrite a previous backup

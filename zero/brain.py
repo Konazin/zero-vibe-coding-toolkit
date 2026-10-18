@@ -22,7 +22,7 @@ def status(args, vault, projects):
         try:
             text = note_bytes(path).decode('utf-8')
             meta = metadata(text)
-            head = git_head(item)
+            head = getattr(args, 'source_head', None) if hasattr(args, 'source_head') else git_head(item)
             reference = meta.get('reference_sha') or meta.get('sha') or item.get('reference_sha')
             verified = item.get('verified_sha') or meta.get('verified_sha')
             modified = None
@@ -112,6 +112,9 @@ def _wiki_basename_matches(vault, stem, suffix='.md'):
 
 
 def verify(args, vault, projects):
+    if getattr(args, 'all_documents', False):
+        from brain_v1 import verify_all
+        return verify_all(args, vault, projects)
     issues = []
     unchecked = 0
     notices = []
@@ -222,7 +225,18 @@ def positive(value):
 
 
 def run(args):
+    if args.brain_action == 'init':
+        from brain_v1 import init_registry
+        return init_registry(args)
+    if not args.config:
+        raise ValueError('Pass --config PRIVATE_REGISTRY for this Brain command')
     vault, projects = load_registry(args.config)
+    selected_project = getattr(args, 'project', None)
+    if selected_project is not None and selected_project not in projects:
+        raise ValueError('Unknown project; choose an identifier from brain status')
+    if args.brain_action in {'search', 'brief', 'index', 'project', 'adr', 'handoff'}:
+        from brain_v1 import run_v1
+        return run_v1(args, vault, projects)
     if args.brain_action == 'capture':
         from brain_capture import capture
         return capture(args, vault, projects)
@@ -231,7 +245,7 @@ def run(args):
 
 def register(subs):
     parser = subs.add_parser('brain', help='Opt-in local Markdown memory; explicit private registry')
-    parser.add_argument('--config', required=True, help='Private registry JSON (never discovered automatically)')
+    parser.add_argument('--config', help='Private registry JSON (never discovered automatically)')
     actions = parser.add_subparsers(dest='brain_action', required=True)
     p = actions.add_parser('status', help='Read freshness by metadata date and local Git SHA')
     p.add_argument('--max-age-days', type=positive, default=7)
@@ -240,10 +254,15 @@ def register(subs):
     p.add_argument('--budget-tokens', type=int, default=2000)
     p = actions.add_parser('switch', help='Emit explicit context without persisting active state')
     p.add_argument('project')
-    actions.add_parser('verify', help='Check registered notes and local Markdown references; never repair')
+    p = actions.add_parser('verify', help='Check registered Markdown references; never repair')
+    p.add_argument('--all-documents', action='store_true', help='Also audit Markdown under explicit project roots')
+    p.add_argument('--project', help='Limit --all-documents to one registered project')
     p = actions.add_parser('capture', help='Prepare, review, then explicitly approve an append')
     p.add_argument('project'); p.add_argument('--draft', required=True)
+    p.add_argument('--target', help='Optional destination under this project root (explicitly registered)')
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument('--text-file'); mode.add_argument('--review', action='store_true')
     mode.add_argument('--approve', metavar='REVIEW_SHA256')
     parser.set_defaults(fn=run)
+    from brain_v1 import register as register_v1
+    register_v1(actions)
