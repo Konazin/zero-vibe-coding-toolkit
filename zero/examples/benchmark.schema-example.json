@@ -1,0 +1,10 @@
+{
+  "description": "SYNTHETIC EXAMPLE ONLY — replace with provider-measured data",
+  "tasks": [
+    {
+      "id": "same-task-same-quality-gate",
+      "baseline": {"input_tokens": 1000, "output_tokens": 500, "success": true},
+      "candidate": {"input_tokens": 800, "output_tokens": 400, "success": true}
+    }
+  ]
+}

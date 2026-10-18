@@ -1,0 +1,37 @@
+name: Zero toolkit validation
+
+on:
+  push:
+    paths:
+      - 'zero/**'
+      - 'ZERO.md'
+      - '.github/workflows/zero-toolkit.yml'
+  pull_request:
+    paths:
+      - 'zero/**'
+      - 'ZERO.md'
+      - '.github/workflows/zero-toolkit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Syntax check
+        run: python -m py_compile zero/zeroctl.py
+      - name: Unit tests
+        run: python -m unittest discover -s zero/tests -v
+      - name: CLI help
+        run: python zero/zeroctl.py --help

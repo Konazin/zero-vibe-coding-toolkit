@@ -1,0 +1,22 @@
+# Copy, verify and extend to exclude confidential and generated content.
+.git/
+node_modules/
+.venv/
+venv/
+.gradle/
+target/
+build/
+dist/
+coverage/
+.next/
+graphify-out/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.db
+**/secrets/**
+**/credentials/**
